@@ -126,6 +126,8 @@ class RoMaV2(nn.Module):
         img_A_hr: torch.Tensor | None = None,
         img_B_hr: torch.Tensor | None = None,
     ) -> dict[str, tuple[torch.Tensor, torch.Tensor] | torch.Tensor]:
+        if torch.get_float32_matmul_precision() != "highest":
+            raise RuntimeError("Float32 matmul precision must be set to highest")
         assert not self.training, "Currently only inference mode released"
         # assumes images between [0, 1]
         # init preds
@@ -420,6 +422,49 @@ class RoMaV2(nn.Module):
         return to_pixel(warp[..., :2], H=H_A, W=W_A), to_pixel(
             warp[..., 2:], H=H_B, W=W_B
         )
+    @classmethod
+    def match_keypoints(
+        cls,
+        x_A: torch.Tensor,
+        x_B: torch.Tensor,
+        warp: torch.Tensor,
+        certainty: torch.Tensor,
+        return_tuple: bool = True,
+        return_inds: bool = False,
+        max_dist: float = 0.005,
+        cert_th: float = 0.0,
+    ):
+        x_A_to_B = F.grid_sample(
+            warp[..., -2:].permute(2, 0, 1)[None],
+            x_A[None, None],
+            align_corners=False,
+            mode="bilinear",
+        )[0, :, 0].mT
+        cert_A_to_B = F.grid_sample(
+            certainty[None, None, ...],
+            x_A[None, None],
+            align_corners=False,
+            mode="bilinear",
+        )[0, 0, 0]
+        D = torch.cdist(x_A_to_B, x_B)
+        inds_A, inds_B = torch.nonzero(
+            (D == D.min(dim=-1, keepdim=True).values)
+            * (D == D.min(dim=-2, keepdim=True).values)
+            * (cert_A_to_B[:, None] > cert_th)
+            * (D < max_dist),
+            as_tuple=True,
+        )
+
+        if return_tuple:
+            if return_inds:
+                return inds_A, inds_B
+            else:
+                return x_A[inds_A], x_B[inds_B]
+        else:
+            if return_inds:
+                return torch.cat((inds_A, inds_B), dim=-1)
+            else:
+                return torch.cat((x_A[inds_A], x_B[inds_B]), dim=-1)
 
 
 def kde(x: torch.Tensor, std: float = 0.1, half: bool = True) -> torch.Tensor:
