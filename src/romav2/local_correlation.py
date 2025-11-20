@@ -1,7 +1,10 @@
 from typing import Literal
 import torch
 import torch.nn.functional as F
-import local_corr
+try:
+    import local_corr
+except:
+    local_corr = None
 
 
 def local_corr_wrapper(
@@ -20,6 +23,7 @@ def local_corr_wrapper(
     sample_mode: Literal["bilinear", "nearest"] = "bilinear",
     dtype=torch.float32,
 ):
+    assert local_corr is not None
     assert padding_mode == "zeros"
     warp = (coords[..., None, :] + local_window[:, None, None]).reshape(B, h * w, K, 2)
     corr = (
